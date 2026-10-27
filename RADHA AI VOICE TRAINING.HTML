@@ -1,0 +1,254 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>RADHA AI VOICE TRAINING</title>
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: #0d1117;
+      color: #c9d1d9;
+      margin: 0;
+      padding: 20px;
+      display: flex;
+      justify-content: center;
+    }
+    .container {
+      background: #161b22;
+      border: 1px solid #30363d;
+      border-radius: 12px;
+      padding: 24px;
+      max-width: 480px;
+      width: 100%;
+      box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+    }
+    h1 {
+      font-size: 20px;
+      font-weight: 700;
+      letter-spacing: 1.5px;
+      color: #58a6ff;
+      text-align: center;
+      margin-top: 0;
+      margin-bottom: 20px;
+    }
+    .status-card {
+      background: #0d1117;
+      border: 1px solid #30363d;
+      border-radius: 8px;
+      padding: 16px;
+      text-align: center;
+      font-size: 15px;
+      margin-bottom: 20px;
+      min-height: 48px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .status-active { color: #3fb950; font-weight: 600; }
+    .status-listening { color: #f0883e; font-weight: 600; }
+    .status-error { color: #f85149; }
+
+    .slider-box {
+      background: #21262d;
+      border-radius: 8px;
+      padding: 16px;
+      margin-bottom: 20px;
+    }
+    .slider-label {
+      display: flex;
+      justify-content: space-between;
+      margin-bottom: 8px;
+      font-size: 14px;
+      font-weight: 600;
+    }
+    input[type=range] {
+      width: 100%;
+      accent-color: #58a6ff;
+    }
+
+    button {
+      background: #238636;
+      color: #ffffff;
+      border: none;
+      border-radius: 6px;
+      padding: 12px 16px;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      width: 100%;
+      margin-bottom: 12px;
+      transition: background 0.2s;
+    }
+    button:hover:not(:disabled) { background: #2ea043; }
+    button:disabled { background: #30363d; color: #8b949e; cursor: not-allowed; }
+    button.btn-blue { background: #1f6feb; }
+    button.btn-blue:hover:not(:disabled) { background: #388bfd; }
+    button.btn-gray { background: #30363d; }
+    button.btn-gray:hover:not(:disabled) { background: #484f58; }
+
+    .sample-list {
+      display: grid;
+      grid-template-columns: repeat(5, 1fr);
+      gap: 6px;
+      margin-bottom: 20px;
+    }
+    .sample-pill {
+      background: #21262d;
+      border: 1px solid #30363d;
+      border-radius: 4px;
+      padding: 6px;
+      text-align: center;
+      font-size: 11px;
+    }
+    .sample-pill.done {
+      background: #238636;
+      border-color: #2ea043;
+      color: #fff;
+    }
+  </style>
+</head>
+<body>
+
+  <div class="container">
+    <h1>RADHA AI VOICE TRAINING</h1>
+
+    <div id="status" class="status-card">Connect ESP32 Bluetooth to start</div>
+
+    <!-- Sensitivity Setting -->
+    <div class="slider-box">
+      <div class="slider-label">
+        <span>Detection Sensitivity</span>
+        <span id="sensVal">75%</span>
+      </div>
+      <input type="range" id="sensSlider" min="20" max="95" value="75" oninput="updateSensitivity(this.value)">
+      <div style="font-size: 11px; color: #8b949e; margin-top: 6px;">Higher = Picks subtle voice / Lower = Heavy wind protection</div>
+    </div>
+
+    <!-- 10 Samples Progress -->
+    <div class="sample-list" id="sampleGrid">
+      <div class="sample-pill" id="pill-1">#1</div>
+      <div class="sample-pill" id="pill-2">#2</div>
+      <div class="sample-pill" id="pill-3">#3</div>
+      <div class="sample-pill" id="pill-4">#4</div>
+      <div class="sample-pill" id="pill-5">#5</div>
+      <div class="sample-pill" id="pill-6">#6</div>
+      <div class="sample-pill" id="pill-7">#7</div>
+      <div class="sample-pill" id="pill-8">#8</div>
+      <div class="sample-pill" id="pill-9">#9</div>
+      <div class="sample-pill" id="pill-10">#10</div>
+    </div>
+
+    <button id="connectBtn" class="btn-blue" onclick="connectDevice()">1. CONNECT ESP32 BLUETOOTH</button>
+    <button id="recordBtn" onclick="recordSample()" disabled>2. RECORD SAMPLE (<span id="sampleLabel">1/10</span>)</button>
+    <button id="confirmBtn" class="btn-gray" onclick="confirmSample()" disabled>3. CONFIRM & PROCEED</button>
+    <button id="saveBtn" class="btn-blue" onclick="saveAllToFlash()" style="display: none;">4. SAVE TO ESP32 FLASH & CLOSE</button>
+  </div>
+
+  <script>
+    const SERVICE_UUID       = "4fafc201-1fb5-459e-8fcc-c5c9c331914b";
+    const CHAR_CMD_UUID      = "beb5483e-36e1-4688-b7f5-ea07361b26a8";
+    const CHAR_STATUS_UUID   = "1c95d5e3-d8f7-413a-bf3d-7a2e5d7be87e";
+
+    let bleDevice, cmdChar, statusChar;
+    let currentSampleIndex = 1;
+    const maxSamples = 10;
+
+    const samplePrompts = [
+      "Say normal: RADHA",
+      "Say quiet: RADHA",
+      "Say loud: RADHA",
+      "Say variation: EY RADHA",
+      "Say variation: SUN NA RADHA",
+      "Say variation: HEY RADHA",
+      "Say fast: RADHA",
+      "Say slow: RAA-DHA",
+      "Say driving tone: RADHA",
+      "Say command: RADHA SUNO"
+    ];
+
+    function setStatus(text, type = "") {
+      const el = document.getElementById("status");
+      el.innerHTML = text;
+      el.className = "status-card " + (type ? "status-" + type : "");
+    }
+
+    async function connectDevice() {
+      try {
+        setStatus("Searching for RADHA-Controller...", "listening");
+        bleDevice = await navigator.bluetooth.requestDevice({
+          filters: [{ name: "RADHA-Controller" }],
+          optionalServices: [SERVICE_UUID]
+        });
+
+        const server = await bleDevice.gatt.connect();
+        const service = await server.getPrimaryService(SERVICE_UUID);
+        cmdChar = await service.getCharacteristic(CHAR_CMD_UUID);
+        statusChar = await service.getCharacteristic(CHAR_STATUS_UUID);
+
+        await statusChar.startNotifications();
+        statusChar.addEventListener('characteristicvaluechanged', handleStatusUpdate);
+
+        setStatus("Connected to ESP32! Ready for training.", "active");
+        document.getElementById("connectBtn").disabled = true;
+        document.getElementById("recordBtn").disabled = false;
+        document.getElementById("sampleLabel").innerText = `1/${maxSamples}: ${samplePrompts[0]}`;
+      } catch (err) {
+        setStatus("Bluetooth Connection Failed: " + err.message, "error");
+      }
+    }
+
+    function handleStatusUpdate(event) {
+      const msg = new TextDecoder().decode(event.target.value);
+      if (msg.startsWith("CAPTURED_OK")) {
+        setStatus(`Sample #${currentSampleIndex} Captured by ESP32 Mic! Verify and Confirm.`, "active");
+        document.getElementById("confirmBtn").disabled = false;
+        document.getElementById("recordBtn").disabled = true;
+      } else if (msg.startsWith("REJECTED")) {
+        setStatus("Voice too short or low. Press RECORD and speak into ESP32 mic again.", "error");
+        document.getElementById("recordBtn").disabled = false;
+      }
+    }
+
+    async function updateSensitivity(val) {
+      document.getElementById("sensVal").innerText = val + "%";
+      if (cmdChar) {
+        await cmdChar.writeValue(new TextEncoder().encode("SET_SENS:" + val));
+      }
+    }
+
+    async function recordSample() {
+      document.getElementById("recordBtn").disabled = true;
+      setStatus(`Listening on ESP32 Collar Mic... Speak "${samplePrompts[currentSampleIndex - 1]}"`, "listening");
+      await cmdChar.writeValue(new TextEncoder().encode("START_RECORD:" + currentSampleIndex));
+    }
+
+    async function confirmSample() {
+      document.getElementById(`pill-${currentSampleIndex}`).classList.add("done");
+      document.getElementById("confirmBtn").disabled = true;
+
+      if (currentSampleIndex < maxSamples) {
+        currentSampleIndex++;
+        document.getElementById("sampleLabel").innerText = `${currentSampleIndex}/${maxSamples}: ${samplePrompts[currentSampleIndex - 1]}`;
+        setStatus(`Sample #${currentSampleIndex - 1} Confirmed. Click RECORD for #${currentSampleIndex}.`, "active");
+        document.getElementById("recordBtn").disabled = false;
+      } else {
+        setStatus("All 10 samples trained successfully! Click Save below.", "active");
+        document.getElementById("recordBtn").style.display = "none";
+        document.getElementById("confirmBtn").style.display = "none";
+        document.getElementById("saveBtn").style.display = "block";
+      }
+    }
+
+    async function saveAllToFlash() {
+      setStatus("Writing complete acoustic model to ESP32 Flash...", "listening");
+      await cmdChar.writeValue(new TextEncoder().encode("SAVE_PERMANENT"));
+      setStatus("Acoustic Model Saved Permanently! You can now close or delete this page.", "active");
+      document.getElementById("saveBtn").disabled = true;
+      setTimeout(() => {
+        if (bleDevice && bleDevice.gatt.connected) bleDevice.gatt.disconnect();
+      }, 1500);
+    }
+  </script>
+</body>
+</html>
